@@ -1,5 +1,4 @@
-Flask==2.3.3
-numpy==1.24.2
-tensorflow==2.13.0
-keras==2.11.0
-gunicorn==21.2.0
+flask
+tensorflow
+google-cloud-storage
+gunicorn
