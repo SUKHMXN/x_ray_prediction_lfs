@@ -70,39 +70,63 @@
 
 # if __name__ == "__main__":
 #     app.run(debug=True)
-
 from flask import Flask, request, jsonify
 from keras.models import load_model
 from keras.preprocessing import image
 import numpy as np
+from google.cloud import storage
+import os
 
-# Initialize Flask app
 app = Flask(__name__)
 
-# Load the trained model
-model = load_model("chest_xray_model.h5")
+# Function to load the model from Google Cloud Storage
+def load_model_from_gcs(bucket_name, model_name):
+    client = storage.Client()
+    bucket = client.bucket(bucket_name)
+    blob = bucket.blob(model_name)
+    model_path = f"/tmp/{model_name}"
+    blob.download_to_filename(model_path)
+    model = load_model(model_path)
+    return model
 
-# Preprocess image for prediction
-def preprocess_image(img):
-    img = img.resize((224, 224))  # Resize to match the input size of the model
-    img_array = image.img_to_array(img) / 255.0  # Normalize pixel values
-    img_array = np.expand_dims(img_array, axis=0)
-    return img_array
+# Load the model from GCS (replace with your bucket name and model file name)
+bucket_name = "your-bucket-name"
+model_name = "chest_xray_model.h5"
+pipeline_model = load_model_from_gcs(bucket_name, model_name)
+
+# Set the API key for security
+API_KEY = os.getenv("API_KEY", "your_default_api_key_here")
 
 @app.route("/predict", methods=["POST"])
 def predict():
+    # API Key validation
+    provided_key = request.headers.get("Authorization")
+    if provided_key != f"Bearer {API_KEY}":
+        return jsonify({"error": "Unauthorized"}), 401
+
+    # Check if a file is uploaded
     if "file" not in request.files:
         return jsonify({"error": "No file uploaded"}), 400
-    
+
     file = request.files["file"]
-    img = image.load_img(file, target_size=(224, 224))
-    processed_img = preprocess_image(img)
-    
-    # Get prediction
-    prediction = model.predict(processed_img)[0][0]
-    result = "Pneumonia" if prediction >= 0.5 else "Not Pneumonia"
-    
-    return jsonify({"prediction": result, "confidence": float(prediction)})
+
+    try:
+        # Process the uploaded image
+        img = image.load_img(file, target_size=(224, 224))  # Update size if needed
+        img_array = image.img_to_array(img) / 255.0
+        img_array = np.expand_dims(img_array, axis=0)
+
+        # Make prediction using the loaded model
+        preds = pipeline_model.predict(img_array)[0][0]
+        result = "Pneumonia" if preds >= 0.5 else "Not Pneumonia"
+
+        # Return the result as JSON
+        return jsonify({"prediction": result, "probability": float(preds)})
+
+    except Exception as e:
+        # Handle errors
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    # Run the app on port 8080 (standard port for Cloud Run)
+    app.run(host="0.0.0.0", port=8080)
